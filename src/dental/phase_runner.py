@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage
 from pydantic import ValidationError
 
 from dental.llm import get_llm
+from dental.model_call import invoke_structured
 from dental.schemas import PhaseTurn
 from dental.state import CEILING_REASON, TURN_CEILING, Phase, next_phase
 
@@ -107,18 +108,7 @@ def _turn_prompt(patient: dict, phase: Phase, state: dict) -> tuple[str, str]:
 
 
 def _call_model(llm: Any, schema: type, system: str, human: str) -> Any:
-    """Structured output from a real chat model or a test double."""
-    if hasattr(llm, "with_structured") and not hasattr(llm, "structured_response"):
-        return llm.with_structured_output(schema).invoke(
-            [("system", system), ("human", human)]
-        )
-    response = llm(system, human)
-    result = getattr(response, "structured_response", None)
-    if isinstance(result, dict):
-        return schema(**result)
-    if isinstance(result, schema):
-        return result
-    raise ValueError("model returned no structured phase turn")
+    return invoke_structured(llm, schema, system, human)
 
 
 def run_phase(state: dict, phase: Phase, llm: Any = None) -> dict:

@@ -3,6 +3,7 @@
 from typing import Any
 
 from dental.llm import get_llm
+from dental.model_call import invoke_structured
 from dental.schemas import CaseBundle
 
 DIFFICULTIES: tuple[str, ...] = ("junior", "mid", "senior")
@@ -44,22 +45,7 @@ Difficulty shapes case complexity and how much is hidden:
 
 
 def _invoke_structured(llm: Any, schema: type, system: str, human: str) -> Any:
-    """Structured output from a real model or a test double.
-
-    Real chat models go through with_structured_output; the fake is called directly
-    and returns its scripted response. Both paths read back the same object.
-    """
-    if hasattr(llm, "with_structured") and not hasattr(llm, "structured_response"):
-        return llm.with_structured_output(schema).invoke(
-            [("system", system), ("human", human)]
-        )
-    response = llm(system, human)
-    result = getattr(response, "structured_response", None)
-    if isinstance(result, dict):
-        return schema(**result)
-    if isinstance(result, schema):
-        return result
-    raise ValueError("model returned no structured case bundle")
+    return invoke_structured(llm, schema, system, human)
 
 
 def generate_case(difficulty: str = "mid", llm: Any = None) -> CaseBundle:

@@ -16,6 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
 from dental.llm import get_llm
+from dental.model_call import invoke_structured
 from dental.schemas import Debrief
 
 # Band thresholds live here, in code, so the model cannot invent them per run.
@@ -73,17 +74,7 @@ def _transcript_text(transcript: list) -> str:
 
 
 def _call_model(llm: Any, schema: type, system: str, human: str) -> Any:
-    if hasattr(llm, "with_structured") and not hasattr(llm, "structured_response"):
-        return llm.with_structured_output(schema).invoke(
-            [("system", system), ("human", human)]
-        )
-    response = llm(system, human)
-    result = getattr(response, "structured_response", None)
-    if isinstance(result, dict):
-        return schema(**result)
-    if isinstance(result, schema):
-        return result
-    raise ValueError("model returned no structured debrief")
+    return invoke_structured(llm, schema, system, human)
 
 
 def _overall_and_band(raw: Debrief) -> Debrief:
