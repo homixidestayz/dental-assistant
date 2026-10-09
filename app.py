@@ -13,11 +13,17 @@ from dental.grader import band_for, grade  # noqa: E402
 from dental.llm import NoProviderConfigured, get_llm  # noqa: E402
 from dental.graph import get_graph  # noqa: E402
 from dental.phase_runner import PHASE_GOALS  # noqa: E402
-from dental.state import Phase, LANGUAGE_LABELS  # noqa: E402
+from dental.state import Phase, LANGUAGE_LABELS, UI_TEXT  # noqa: E402
 
 st.set_page_config(page_title="Dental OSCE", layout="wide")
 
 PHASE_LABELS = {phase: phase.value.replace("_", " ").title() for phase in Phase}
+
+
+def _t(key: str) -> str:
+    """Get translated text for current language."""
+    lang = st.session_state.get("language", "en")
+    return UI_TEXT.get(lang, UI_TEXT["en"]).get(key, UI_TEXT["en"].get(key, key))
 
 
 def _reset(bundle, difficulty: str) -> None:
@@ -41,13 +47,13 @@ def _reset(bundle, difficulty: str) -> None:
 
 
 def _render_sidebar() -> None:
-    st.sidebar.title("Station")
+    st.sidebar.title(_t("station"))
     difficulty = st.sidebar.selectbox(
-        "Difficulty", DIFFICULTIES, index=DIFFICULTIES.index("mid")
+        _t("difficulty"), DIFFICULTIES, index=DIFFICULTIES.index("mid")
     )
 
     language = st.sidebar.selectbox(
-        "Language",
+        _t("language"),
         list(LANGUAGE_LABELS.keys()),
         index=list(LANGUAGE_LABELS.keys()).index(st.session_state.get("language", "en")),
         format_func=lambda k: LANGUAGE_LABELS[k],
@@ -55,22 +61,22 @@ def _render_sidebar() -> None:
     if language != st.session_state.get("language", "en"):
         st.session_state.language = language
 
-    if st.sidebar.button("Start new encounter", type="primary"):
+    if st.sidebar.button(_t("start_encounter"), type="primary"):
         try:
-            with st.spinner("Generating a patient…"):
+            with st.spinner(_t("generating_patient")):
                 bundle = generate_case(difficulty=difficulty)
             _reset(bundle, difficulty)
             st.rerun()
         except NoProviderConfigured as exc:
             st.sidebar.error(str(exc))
-        except Exception as exc:  # provider/network/schema failure
+        except Exception as exc:
             st.sidebar.error(f"Could not generate a case: {exc}")
 
     st.sidebar.divider()
-    st.sidebar.subheader("Patient card")
+    st.sidebar.subheader(_t("patient_card"))
     case = st.session_state.get("case")
     if not case:
-        st.sidebar.caption("No patient yet. Start an encounter.")
+        st.sidebar.caption(_t("no_patient"))
         return
 
     st.sidebar.markdown(f"**{case.get('age', '?')}-year-old {case.get('sex', '')}**")
@@ -79,7 +85,7 @@ def _render_sidebar() -> None:
     for label in ("medical_history", "drug_history", "allergies"):
         values = case.get(label) or []
         if values:
-            st.sidebar.markdown(f"**{label.replace('_', ' ').title()}**")
+            st.sidebar.markdown(f"**{_t(label)}**")
             for value in values:
                 st.sidebar.markdown(f"- {value}")
 
@@ -90,9 +96,9 @@ def _render_sidebar() -> None:
     ]
     st.sidebar.divider()
     if unrevealed:
-        st.sidebar.caption(f"{len(unrevealed)} finding(s) not yet uncovered")
+        st.sidebar.caption(_t("uncovered_count").format(count=len(unrevealed)))
     else:
-        st.sidebar.success("All findings uncovered")
+        st.sidebar.success(_t("all_uncovered"))
 
 
 def _note_revealed_findings() -> None:
@@ -150,10 +156,10 @@ def _advance_once() -> None:
 
 
 def _render_chat() -> None:
-    st.subheader("Encounter")
+    st.subheader(_t("encounter"))
     phase = Phase(st.session_state.get("phase", Phase.COMPLAINT.value))
     if phase is not Phase.DEBRIEF:
-        st.caption(f"Phase: **{PHASE_LABELS[phase]}** — {PHASE_GOALS[phase]}")
+        st.caption(f"{_t('phase')}: **{PHASE_LABELS[phase]}** — {PHASE_GOALS[phase]}")
 
     for message in st.session_state.get("messages", []):
         role = getattr(message, "type", "user")
@@ -164,7 +170,7 @@ def _render_chat() -> None:
         return
 
     if not st.session_state.get("case"):
-        st.info("Start an encounter from the sidebar.")
+        st.info(_t("start_info"))
         return
 
     # The encounter ends when a phase advances to DEBRIEF. Grading is its own
@@ -179,7 +185,7 @@ def _render_chat() -> None:
             st.rerun()
         return
 
-    prompt = st.chat_input("Speak to the patient…")
+    prompt = st.chat_input(_t("speak_to_patient"))
     if not prompt:
         return
 
@@ -194,8 +200,8 @@ def _render_chat() -> None:
     except NoProviderConfigured as exc:
         st.error(str(exc))
     except Exception as exc:
-        st.error(f"The encounter stopped: {exc}")
-        st.caption("Your messages are kept. Try again to continue.")
+        st.error(_t("encounter_stopped").format(error=exc))
+        st.caption(_t("messages_kept"))
 
     st.rerun()
 
@@ -205,11 +211,11 @@ def _render_debrief() -> None:
     if not debrief:
         return
 
-    st.subheader("Debrief")
+    st.subheader(_t("debrief"))
     overall = debrief.get("overall", 0)
-    st.metric("Overall", f"{overall}%", band_for(overall))
+    st.metric(_t("overall"), f"{overall}%", band_for(overall))
 
-    st.markdown("**Per phase**")
+    st.markdown(f"**{_t('per_phase')}**")
     for score in debrief.get("phase_scores", []):
         label = PHASE_LABELS.get(Phase(score["phase"]), score["phase"])
         st.progress(
@@ -220,18 +226,18 @@ def _render_debrief() -> None:
             st.caption(score["reasoning"])
 
     if debrief.get("focus_areas"):
-        st.markdown("**Work on these**")
+        st.markdown(f"**{_t('work_on')}**")
         for area in debrief["focus_areas"]:
             st.markdown(f"- {area}")
 
     if debrief.get("strengths"):
-        st.markdown("**What you did well**")
+        st.markdown(f"**{_t('strengths')}**")
         for strength in debrief["strengths"]:
             st.markdown(f"- {strength}")
 
-    if st.button("Re-grade"):
+    if st.button(_t("regrade")):
         try:
-            with st.spinner("Grading again…"):
+            with st.spinner(_t("grading_again")):
                 fresh = grade(
                     case=st.session_state["case"],
                     rubric=st.session_state["rubric"],
@@ -242,7 +248,7 @@ def _render_debrief() -> None:
             st.session_state["debrief"] = fresh.model_dump()
             st.rerun()
         except Exception as exc:
-            st.error(f"Re-grade failed: {exc}")
+            st.error(_t("regrade_failed").format(error=exc))
 
 
 def main() -> None:
@@ -276,7 +282,7 @@ def main() -> None:
         _render_sidebar()
 
     st.divider()
-    st.caption("Teaching tool. Not for clinical use or patient advice.")
+    st.caption(_t("not_for_clinical"))
 
 
 if __name__ == "__main__":
