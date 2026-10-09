@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from dental.llm import get_llm
 from dental.model_call import invoke_structured
 from dental.schemas import Debrief
+from dental.state import LANGUAGE_LABELS
 
 # Band thresholds live here, in code, so the model cannot invent them per run.
 EXCELLENT = 80
@@ -101,6 +102,7 @@ def grade(
     transcript: list,
     phase_reasons: dict | None = None,
     llm: Any = None,
+    language: str = "en",
 ) -> Debrief:
     """Score an encounter. Callable directly — no graph run required.
 
@@ -122,6 +124,8 @@ def grade(
         else "(none)"
     )
 
+    lang_name = LANGUAGE_LABELS.get(language, "English")
+
     human = f"""PATIENT
 {case}
 
@@ -134,6 +138,9 @@ TRANSCRIPT
 PHASE NOTES
 Phases that did not end on their own terms:
 {stalled_note}
+
+Write the debrief in {lang_name}. All fields (band, focus_areas, strengths, reasoning)
+must be in {lang_name}.
 """
     raw = _call_model(llm, Debrief, _SYSTEM, human)
     if not isinstance(raw, Debrief):

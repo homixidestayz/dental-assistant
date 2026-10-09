@@ -13,7 +13,7 @@ from dental.grader import band_for, grade  # noqa: E402
 from dental.llm import NoProviderConfigured, get_llm  # noqa: E402
 from dental.graph import get_graph  # noqa: E402
 from dental.phase_runner import PHASE_GOALS  # noqa: E402
-from dental.state import Phase  # noqa: E402
+from dental.state import Phase, LANGUAGE_LABELS  # noqa: E402
 
 st.set_page_config(page_title="Dental OSCE", layout="wide")
 
@@ -31,6 +31,9 @@ def _reset(bundle, difficulty: str) -> None:
     st.session_state["debrief"] = None
     st.session_state["revealed"] = set()
     st.session_state.difficulty = difficulty
+    # Language persists across encounters unless explicitly changed
+    if "language" not in st.session_state:
+        st.session_state.language = "en"
     st.session_state.thread_id = f"enc-{len(st.session_state.get('all_threads', []))}"
     st.session_state.all_threads = st.session_state.get("all_threads", []) + [
         st.session_state.thread_id
@@ -42,6 +45,15 @@ def _render_sidebar() -> None:
     difficulty = st.sidebar.selectbox(
         "Difficulty", DIFFICULTIES, index=DIFFICULTIES.index("mid")
     )
+
+    language = st.sidebar.selectbox(
+        "Language",
+        list(LANGUAGE_LABELS.keys()),
+        index=list(LANGUAGE_LABELS.keys()).index(st.session_state.get("language", "en")),
+        format_func=lambda k: LANGUAGE_LABELS[k],
+    )
+    if language != st.session_state.get("language", "en"):
+        st.session_state.language = language
 
     if st.sidebar.button("Start new encounter", type="primary"):
         try:
@@ -121,6 +133,7 @@ def _advance_once() -> None:
         "total_turns": st.session_state["total_turns"],
         "phase_reasons": st.session_state["phase_reasons"],
         "debrief": st.session_state["debrief"],
+        "language": st.session_state.get("language", "en"),
         "llm": get_llm(),
     }
     config = {
@@ -224,6 +237,7 @@ def _render_debrief() -> None:
                     rubric=st.session_state["rubric"],
                     transcript=st.session_state["messages"],
                     phase_reasons=st.session_state["phase_reasons"],
+                    language=st.session_state.get("language", "en"),
                 )
             st.session_state["debrief"] = fresh.model_dump()
             st.rerun()

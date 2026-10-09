@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from dental.llm import get_llm
 from dental.model_call import invoke_structured
 from dental.schemas import PhaseTurn
-from dental.state import CEILING_REASON, TURN_CEILING, Phase, next_phase
+from dental.state import CEILING_REASON, TURN_CEILING, Phase, next_phase, LANGUAGE_LABELS
 
 
 class MalformedModelOutput(RuntimeError):
@@ -69,12 +69,14 @@ _CONSTRAINTS = """Rules you must never break:
 """
 
 
-def build_patient_prompt(patient: dict, phase: Phase) -> str:
+def build_patient_prompt(patient: dict, phase: Phase, language: str = "en") -> str:
     """The patient persona, the phase goal, and the standing constraints."""
     age = patient.get("age", "an adult")
     sex = patient.get("sex", "")
     complaint = patient.get("complaint", "a dental problem")
     hidden = patient.get("hidden_findings", []) or []
+
+    lang_name = LANGUAGE_LABELS.get(language, "English")
 
     lines = [
         f"You are a {age}-year-old {sex} patient at a dental appointment. "
@@ -93,8 +95,7 @@ def build_patient_prompt(patient: dict, phase: Phase) -> str:
         f"Right now the candidate is working on: {PHASE_GOALS[phase]}",
         "",
         _CONSTRAINTS,
-        "Reply as this patient would: a few sentences at most, in the language a "
-        "patient uses, not clinical terminology.",
+        f"Reply in {lang_name}. All your responses must be in {lang_name}.",
         "",
         "After your reply, decide whether this phase is complete — that is, "
         "whether the candidate has covered everything this stage needs. Set "
@@ -121,8 +122,9 @@ def _transcript_text(messages: list) -> str:
 
 def _turn_prompt(patient: dict, phase: Phase, state: dict) -> tuple[str, str]:
     transcript = _transcript_text(state.get("messages", []))
+    language = state.get("language", "en")
     return (
-        build_patient_prompt(patient, phase),
+        build_patient_prompt(patient, phase, language),
         f"Turn {state.get('total_turns', 0) + 1}. "
         f"Turns taken in this phase: {state.get('turns_in_phase', 0)}."
         + (f"\n\nCONVERSATION SO FAR\n{transcript}" if transcript else ""),

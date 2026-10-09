@@ -34,6 +34,16 @@ TURN_CEILING: int = 8
 
 CEILING_REASON: str = "turn ceiling reached"
 
+# Supported encounter languages. The whole encounter runs in this language.
+LANGUAGES: tuple[str, ...] = ("en", "fr", "ar")
+
+# Display names for the UI.
+LANGUAGE_LABELS: dict[str, str] = {
+    "en": "English",
+    "fr": "French",
+    "ar": "Arabic",
+}
+
 
 class DentalState(TypedDict, total=False):
     """Everything the encounter carries from turn to turn.
@@ -54,6 +64,7 @@ class DentalState(TypedDict, total=False):
     total_turns: int
     debrief: Any
     llm: Any
+    language: str
 
 
 def next_phase(phase: Phase) -> Phase:
@@ -78,4 +89,5 @@ def initial_state() -> DentalState:
         turns_in_phase=0,
         total_turns=0,
         debrief=None,
+        language="en",
     )
