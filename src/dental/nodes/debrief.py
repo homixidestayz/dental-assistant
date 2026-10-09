@@ -12,7 +12,8 @@ def node_debrief(state: dict, llm=None) -> dict:
 
     Idempotent: once a debrief exists it is returned unchanged. The app reruns on
     every interaction, and grading is the slowest call in the app — without this
-    every rerun after the encounter would pay for a fresh grade.
+    every rerun after the encounter would pay for a fresh grade. Re-grading on
+    purpose goes through `grade()` directly, from the Re-grade button.
     """
     if state.get("debrief"):
         return state

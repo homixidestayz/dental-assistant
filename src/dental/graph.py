@@ -4,10 +4,14 @@ An invocation plays exactly one encounter turn and returns. The phase the next
 invocation resumes at lives in `state["phase"]`, which `run_phase` advances.
 
 That matters for a chat UI: the learner sends a message, the patient replies, control
-returns. If the graph instead ran to the end of the encounter per invoke, every
-keystroke would replay all seven phases and grade them.
+returns. If the graph ran to the end of the encounter per invoke, every keystroke would
+replay all seven phases and re-grade the transcript.
 
 LangGraph Studio drives this the same way, invoking once per input.
+
+Note the consequence: the graph has no self-loops. The turn loop belongs to the caller,
+and the phase counter in state is where the next invocation resumes. A caller that
+wants a whole encounter in one go must drive it turn by turn, as `app.py` does.
 """
 
 from typing import Any
