@@ -41,6 +41,10 @@ Difficulty shapes case complexity and how much is hidden:
 - mid: some facts require direct questioning, plausible differentials to separate.
 - senior: atypical or mixed presentation, significant hidden history that changes
   management, several differentials that must be actively excluded.
+
+Write the entire case in {lang_name}. The complaint must be in the patient's own words
+in {lang_name}, not clinical language. All history fields, hidden findings, diagnosis,
+differentials, and investigation results must be in {lang_name}.
 """
 
 
@@ -48,7 +52,7 @@ def _invoke_structured(llm: Any, schema: type, system: str, human: str) -> Any:
     return invoke_structured(llm, schema, system, human)
 
 
-def generate_case(difficulty: str = "mid", llm: Any = None) -> CaseBundle:
+def generate_case(difficulty: str = "mid", language: str = "en", llm: Any = None) -> CaseBundle:
     """Generate a patient case and its grading rubric together.
 
     `difficulty` is one of DIFFICULTIES and feeds generation only — not the rubric,
@@ -60,9 +64,11 @@ def generate_case(difficulty: str = "mid", llm: Any = None) -> CaseBundle:
         )
     if llm is None:
         llm = get_llm()
+    from dental.state import LANGUAGE_LABELS
+    lang_name = LANGUAGE_LABELS.get(language, "English")
     return _invoke_structured(
         llm,
         CaseBundle,
         _SYSTEM,
-        _HUMAN.format(difficulty=difficulty),
+        _HUMAN.format(difficulty=difficulty, lang_name=lang_name),
     )

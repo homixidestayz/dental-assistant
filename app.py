@@ -64,7 +64,7 @@ def _render_sidebar() -> None:
     if st.sidebar.button(_t("start_encounter"), type="primary"):
         try:
             with st.spinner(_t("generating_patient")):
-                bundle = generate_case(difficulty=difficulty)
+                bundle = generate_case(difficulty=difficulty, language=st.session_state.get("language", "en"))
             _reset(bundle, difficulty)
             st.rerun()
         except NoProviderConfigured as exc:
