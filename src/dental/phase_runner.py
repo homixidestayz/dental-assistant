@@ -6,7 +6,7 @@ the turn ceiling exist once rather than seven times.
 
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
 from dental.llm import get_llm
@@ -62,6 +62,10 @@ _CONSTRAINTS = """Rules you must never break:
   not the clinician.
 - Never break character to comment on the candidate's performance. No coaching, no
   hints, no encouragement, no grading.
+- Never repeat yourself. Everything you have already said is in the conversation so
+  far. Do not restate your complaint, do not re-answer a question they have already
+  asked, and do not offer information you have already given. Move the conversation
+  forward instead.
 """
 
 
@@ -99,11 +103,29 @@ def build_patient_prompt(patient: dict, phase: Phase) -> str:
     return "\n".join(lines)
 
 
+def _transcript_text(messages: list) -> str:
+    """The conversation so far, labelled by speaker.
+
+    Without this the model sees only the patient details and answers in a vacuum,
+    re-asking and re-answering the same questions every turn.
+    """
+    lines = []
+    for message in messages or []:
+        content = getattr(message, "content", "")
+        if isinstance(message, HumanMessage) or getattr(message, "type", "") == "human":
+            lines.append(f"CANDIDATE: {content}")
+        else:
+            lines.append(f"PATIENT: {content}")
+    return "\n".join(lines)
+
+
 def _turn_prompt(patient: dict, phase: Phase, state: dict) -> tuple[str, str]:
+    transcript = _transcript_text(state.get("messages", []))
     return (
         build_patient_prompt(patient, phase),
         f"Turn {state.get('total_turns', 0) + 1}. "
-        f"Turns taken in this phase: {state.get('turns_in_phase', 0)}.",
+        f"Turns taken in this phase: {state.get('turns_in_phase', 0)}."
+        + (f"\n\nCONVERSATION SO FAR\n{transcript}" if transcript else ""),
     )
 
 
