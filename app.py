@@ -229,31 +229,42 @@ def _render_chat() -> None:
             placeholder = st.empty()
             placeholder.markdown("🦷  *typing...*")
 
-            # Run the graph and stream updates
-            out = None
-            for chunk in graph.stream(state, config=config, stream_mode="updates"):
-                for node_name, node_output in chunk.items():
-                    if node_name == "messages" and node_output:
-                        for msg in node_output:
-                            if hasattr(msg, "type") and msg.type == "ai":
-                                placeholder.markdown(msg.content + "▌")
+            # Stream the response and collect the final state
+            with st.chat_message("assistant", avatar="🦷"):
+                placeholder = st.empty()
+                placeholder.markdown("🦷  *typing...*")
 
-            # Final invoke to get complete state
-            out = graph.invoke(state, config=config)
+                final_state = None
+                for chunk in graph.stream(state, config=config, stream_mode="updates"):
+                    for node_name, node_output in chunk.items():
+                        if node_name == "messages" and node_output:
+                            for msg in node_output:
+                                if hasattr(msg, "type") and msg.type == "ai":
+                                    placeholder.markdown(msg.content + "▌")
+                        # Capture the final state from the last update
+                        if node_output:
+                            final_state = {**state, **node_output}
 
-            # Final message without cursor
-            if out and out.get("messages"):
-                for msg in out["messages"]:
-                    if hasattr(msg, "type") and msg.type == "ai":
-                        placeholder.markdown(msg.content)
-                        break
+                # Use the final state from streaming (no second invoke)
+                if final_state is None:
+                    # Fallback: single invoke if streaming yielded nothing
+                    out = graph.invoke(state, config=config)
+                    final_state = out
 
-        st.session_state["messages"] = out["messages"]
-        st.session_state["phase"] = out["phase"]
-        st.session_state["phase_reasons"] = out.get("phase_reasons", {})
-        st.session_state["turns_in_phase"] = out.get("turns_in_phase", 0)
-        st.session_state["total_turns"] = out.get("total_turns", 0)
-        st.session_state["debrief"] = out.get("debrief")
+                # Final message without cursor
+                if final_state and final_state.get("messages"):
+                    for msg in final_state["messages"]:
+                        if hasattr(msg, "type") and msg.type == "ai":
+                            placeholder.markdown(msg.content)
+                            break
+
+                # Update session state from the streamed final state
+                st.session_state["messages"] = final_state["messages"]
+                st.session_state["phase"] = final_state["phase"]
+                st.session_state["phase_reasons"] = final_state.get("phase_reasons", {})
+                st.session_state["turns_in_phase"] = final_state.get("turns_in_phase", 0)
+                st.session_state["total_turns"] = final_state.get("total_turns", 0)
+                st.session_state["debrief"] = final_state.get("debrief")
 
     except NoProviderConfigured as exc:
         st.error(str(exc))
