@@ -1,7 +1,7 @@
 """Encounter state: the clinical phase enum and the graph's state shape."""
 
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
@@ -35,11 +35,12 @@ TURN_CEILING: int = 8
 CEILING_REASON: str = "turn ceiling reached"
 
 
-class DentalState(dict):
-    """The graph's state.
+class DentalState(TypedDict, total=False):
+    """Everything the encounter carries from turn to turn.
 
-    A plain dict subclass rather than a TypedDict: it carries the same keys without
-    the static checker rejecting the injected `llm` the tests thread through state.
+    `llm` rides in state rather than a module global so tests substitute a fake
+    without monkeypatching, and so the Streamlit app can supply one model per
+    session. It is an injected dependency, not encounter data.
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
@@ -52,6 +53,7 @@ class DentalState(dict):
     turns_in_phase: int
     total_turns: int
     debrief: Any
+    llm: Any
 
 
 def next_phase(phase: Phase) -> Phase:

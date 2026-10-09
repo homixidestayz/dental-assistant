@@ -84,18 +84,30 @@ def test_malformed_output_retries_then_raises():
     assert len(bad.calls) == 2  # one retry
 
 
-def test_should_advance_routes_to_self_loop_then_next():
+def test_should_advance_routes_where_run_phase_left_the_phase():
+    """Router, not a second decision: run_phase already advanced the phase.
+
+    Asserting on post-run state is what the graph actually does. The earlier
+    version of this test passed state as it looked *before* the turn, which made it
+    green while the graph skipped every other phase.
+    """
     looping = _state(turns=1)
-    looping.update(phase_complete=False)
-    assert should_advance(looping) == Phase.HISTORY.value
+    looping.update(phase=Phase.HISTORY.value, phase_complete=False)
+    assert should_advance(looping) == Phase.HISTORY.value  # another turn here
+
     done = _state(turns=1)
-    done.update(phase_complete=True)
-    assert should_advance(done) == Phase.EXAMINATION.value
+    done.update(phase=Phase.EXAMINATION.value, phase_complete=True)
+    assert should_advance(done) == Phase.EXAMINATION.value  # run_phase advanced it
+
+
+def test_should_advance_debrief_routes_to_itself():
+    """DEBRIEF is terminal; asking for its successor is the bug this guards."""
+    assert should_advance({"phase": Phase.DEBRIEF.value}) == Phase.DEBRIEF.value
 
 
 def test_should_advance_forces_next_at_the_ceiling():
     stuck = _state(turns=TURN_CEILING)
-    stuck.update(phase_complete=False)
+    stuck.update(phase=Phase.HISTORY.value, phase_complete=False)
     assert should_advance(stuck) == Phase.EXAMINATION.value
 
 

@@ -174,12 +174,22 @@ def run_phase(state: dict, phase: Phase, llm: Any = None) -> dict:
 
 
 def should_advance(state: dict) -> str:
-    """Route: the next phase when this one is done, otherwise back to itself.
+    """Route to the phase the graph should visit next.
 
-    The ceiling is checked here as well as in run_phase so routing stays correct
-    even if a caller sets the counters directly.
+    `run_phase` has already advanced `state["phase"]` by the time this runs, so this
+    is a router, not a second decision: the destination is whatever phase the node
+    left in state. Advancing here as well would skip every other phase.
+
+    DEBRIEF routes to itself, and the graph's edge from it goes to END.
     """
     current = Phase(state["phase"])
-    if state.get("phase_complete") or state.get("turns_in_phase", 0) >= TURN_CEILING:
+    if current is Phase.DEBRIEF:
+        return Phase.DEBRIEF.value
+    # Defensive only: run_phase advances at the ceiling itself. This keeps routing
+    # correct if a caller ever populates the counters directly.
+    if (
+        state.get("turns_in_phase", 0) >= TURN_CEILING
+        and not state.get("phase_complete")
+    ):
         return next_phase(current).value
     return current.value
