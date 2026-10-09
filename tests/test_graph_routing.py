@@ -1,8 +1,36 @@
-import pytest
+"""Phase machine routing, driven one learner turn per invocation.
+
+Each test drives the graph the way the Streamlit app does: append a learner message,
+invoke once, carry state forward. One invocation is one encounter turn.
+"""
+
+from langchain_core.messages import HumanMessage
 
 from dental.graph import build_graph, get_graph
 from dental.state import TURN_CEILING, Phase
 from conftest import FakeLLM, FakeResponse
+
+PHASE_ORDER_EXPECTED = [
+    Phase.COMPLAINT.value,
+    Phase.HISTORY.value,
+    Phase.EXAMINATION.value,
+    Phase.INVESTIGATIONS.value,
+    Phase.DIAGNOSIS.value,
+    Phase.MANAGEMENT.value,
+    Phase.CLOSING.value,
+]
+
+STATE_KEYS = (
+    "messages",
+    "phase",
+    "patient",
+    "rubric",
+    "turns_in_phase",
+    "total_turns",
+    "phase_reasons",
+    "debrief",
+    "llm",
+)
 
 
 def _debrief_response(score=5, max_score=7):
@@ -26,36 +54,48 @@ def _debrief_response(score=5, max_score=7):
     )
 
 
+class Scripted(FakeLLM):
+    """complete=True finishes each phase in one turn; False never finishes.
+
+    stuck_turns holds the number of leading turns the model refuses to complete,
+    which is how a single phase is pushed to its ceiling.
+    """
+
+    def __init__(self, complete=True, stuck_turns=0):
+        super().__init__(debrief_response=_debrief_response())
+        self.complete = complete
+        self.stuck_turns = stuck_turns
+        self.turns = 0
+
+    def __call__(self, system_prompt="", human_prompt=""):
+        if "examiner" in system_prompt.lower():
+            self.calls.append((system_prompt, human_prompt))
+            return self.debrief_response
+        self.calls.append((system_prompt, human_prompt))
+        self.turns += 1
+        return FakeResponse(
+            structured_response={
+                "patient_reply": "ok",
+                "phase_complete": self.complete and self.turns > self.stuck_turns,
+                "phase_reason": "",
+            }
+        )
+
+
 def _never_complete():
-    return FakeLLM(
-        structured_response={
-            "patient_reply": "...",
-            "phase_complete": False,
-            "phase_reason": "",
-        },
-        debrief_response=_debrief_response(),
-    )
+    return Scripted(complete=False)
 
 
 def _always_complete():
-    return FakeLLM(
-        structured_response={
-            "patient_reply": "yes",
-            "phase_complete": True,
-            "phase_reason": "",
-        },
-        debrief_response=_debrief_response(),
-    )
+    return Scripted(complete=True)
 
 
-def _state(phase=Phase.COMPLAINT, llm=None, rubric=None):
+def _state(phase=Phase.COMPLAINT, llm=None):
     state = {
         "messages": [],
         "phase": phase.value,
         "patient": {"age": 54, "complaint": "My tooth is killing me."},
-        # The debrief node is live, and grade() requires the rubric the case was
-        # generated with. Routing tests supply one.
-        "rubric": rubric if rubric is not None else [{"phase": "history", "criteria": ["allergies"], "max_score": 7}],
+        "rubric": [{"phase": "history", "criteria": ["allergies"], "max_score": 7}],
         "turns_in_phase": 0,
         "total_turns": 0,
         "debrief": None,
@@ -66,6 +106,23 @@ def _state(phase=Phase.COMPLAINT, llm=None, rubric=None):
     return state
 
 
+def _turn(graph, state, thread_id, line="how can I help"):
+    """One learner turn. Returns the carried-forward state."""
+    state = dict(state)
+    state["messages"] = list(state.get("messages", [])) + [HumanMessage(content=line)]
+    out = graph.invoke(
+        state, config={"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+    )
+    return {key: out[key] for key in STATE_KEYS}
+
+
+def _drive(state, llm, turns, thread_id="drive"):
+    graph = get_graph()
+    for i in range(turns):
+        state = _turn(graph, state, thread_id, f"learner line {i}")
+    return state
+
+
 def test_graph_exposes_a_node_per_phase_and_debrief():
     builder = build_graph()
     nodes = set(builder.nodes)
@@ -73,93 +130,52 @@ def test_graph_exposes_a_node_per_phase_and_debrief():
         assert phase.value in nodes
 
 
-def test_wrong_answers_do_not_loop_forever():
-    """A model that never finishes must still reach the debrief."""
-    graph = get_graph()
-    out = graph.invoke(
-        _state(llm=_never_complete()),
-        config={"configurable": {"thread_id": "t1"}, "recursion_limit": 500},
-    )
-    assert out["phase"] == Phase.DEBRIEF.value
-
-
 def test_happy_path_visits_every_phase_in_order():
-    graph = get_graph()
-    out = graph.invoke(
-        _state(llm=_always_complete()),
-        config={"configurable": {"thread_id": "t2"}, "recursion_limit": 200},
-    )
-    assert out["phase"] == Phase.DEBRIEF.value
-    assert out["total_turns"] == len(PHASE_ORDER_EXPECTED)
-    assert set(out["phase_reasons"]) == set(PHASE_ORDER_EXPECTED)
+    llm = _always_complete()
+    state = _drive(_state(llm=llm), llm, len(PHASE_ORDER_EXPECTED))
+    assert set(state["phase_reasons"]) == set(PHASE_ORDER_EXPECTED)
+    # the closing phase advanced into the debrief
+    assert state["phase"] == Phase.DEBRIEF.value
 
 
-PHASE_ORDER_EXPECTED = [
-    Phase.COMPLAINT.value,
-    Phase.HISTORY.value,
-    Phase.EXAMINATION.value,
-    Phase.INVESTIGATIONS.value,
-    Phase.DIAGNOSIS.value,
-    Phase.MANAGEMENT.value,
-    Phase.CLOSING.value,
-]
+def test_wrong_answers_do_not_loop_forever():
+    """A model that never finishes still leaves each phase at the ceiling."""
+    llm = _never_complete()
+    state = _drive(_state(llm=llm), llm, 7 * TURN_CEILING)
+    assert state["phase"] == Phase.DEBRIEF.value
+    assert state["phase_reasons"][Phase.HISTORY.value] == "turn ceiling reached"
 
 
 def test_ceiling_bounds_a_stuck_phase_at_eight_turns():
-    """A model that completes nothing costs exactly TURN_CEILING per phase."""
-    graph = get_graph()
-    out = graph.invoke(
-        _state(Phase.HISTORY, llm=_never_complete()),
-        config={"configurable": {"thread_id": "t3"}, "recursion_limit": 500},
-    )
-    # START routes to complaint, so all seven phases are played and each is capped.
-    assert out["total_turns"] == len(PHASE_ORDER_EXPECTED) * TURN_CEILING
-    assert out["phase_reasons"][Phase.HISTORY.value] == "turn ceiling reached"
+    """Complaint never completes, so it costs exactly TURN_CEILING turns."""
+    llm = _never_complete()
+    state = _drive(_state(llm=llm), llm, TURN_CEILING + 1, "ceiling")
+    assert state["total_turns"] == TURN_CEILING + 1
+    assert state["phase"] == Phase.HISTORY.value
+    assert state["phase_reasons"][Phase.COMPLAINT.value] == "turn ceiling reached"
 
 
 def test_a_single_stuck_phase_is_bounded_not_the_whole_encounter():
-    """One phase overruns; the rest advance normally. The learner's time is capped
-    per phase, not per encounter."""
-    from dental.state import Phase as P
+    """One phase overruns to its ceiling; the rest advance in a single turn each."""
+    llm = Scripted(complete=True, stuck_turns=TURN_CEILING)
+    # complaint takes its full ceiling, then the six remaining phases take one turn each
+    total = TURN_CEILING + (len(PHASE_ORDER_EXPECTED) - 1)
+    state = _drive(_state(llm=llm), llm, total, "single-stuck")
 
-    class Scripted(FakeLLM):
-        def __call__(self, system_prompt="", human_prompt=""):
-            if "examiner" in system_prompt.lower():
-                return self.debrief_response
-            self.calls.append((system_prompt, human_prompt))
-            turn = int(human_prompt.split("Turn ")[1].split(".")[0])
-            # Never complete during the first two phases' worth of turns; the
-            # ceiling carries each one out. After that, complete immediately.
-            return FakeResponse(
-                structured_response={
-                    "patient_reply": "ok",
-                    "phase_complete": turn > 2 * TURN_CEILING,
-                    "phase_reason": "",
-                }
-            )
-
-    graph = get_graph()
-    out = graph.invoke(
-        _state(llm=Scripted(debrief_response=_debrief_response())),
-        config={"configurable": {"thread_id": "t6"}, "recursion_limit": 500},
-    )
-    # complaint and history each capped at 8, then the remaining 5 phases at 1 turn
-    assert out["total_turns"] == 2 * TURN_CEILING + 5
-    assert out["phase_reasons"][P.COMPLAINT.value] == "turn ceiling reached"
-    assert out["phase_reasons"][P.HISTORY.value] == "turn ceiling reached"
-    assert out["phase_reasons"][P.CLOSING.value] == ""
+    assert state["total_turns"] == total
+    assert state["phase_reasons"][Phase.COMPLAINT.value] == "turn ceiling reached"
+    assert state["phase_reasons"][Phase.CLOSING.value] == ""
+    assert state["phase"] == Phase.DEBRIEF.value
 
 
 def test_injected_llm_is_used_by_the_nodes():
     """State-carried llm must actually reach the model, not a module global."""
     llm = _always_complete()
     graph = get_graph()
-    graph.invoke(
-        _state(llm=llm),
-        config={"configurable": {"thread_id": "t4"}, "recursion_limit": 200},
-    )
-    # seven phase turns plus one grading call
-    assert len(llm.calls) == len(PHASE_ORDER_EXPECTED) + 1
+    state = _state(llm=llm)
+    before = len(llm.calls)
+    _turn(graph, state, "t4")
+    assert len(llm.calls) - before == 1
 
 
 def test_graph_export_exists_for_langgraph_json():
@@ -174,3 +190,11 @@ def test_get_graph_accepts_a_custom_checkpointer():
 
     compiled = get_graph(checkpointer=MemorySaver())
     assert compiled.checkpointer is not None
+
+
+def test_a_fresh_state_starts_at_the_complaint():
+    from dental.graph import entry_phase
+
+    assert entry_phase({}) == Phase.COMPLAINT.value
+    assert entry_phase({"phase": Phase.MANAGEMENT.value}) == Phase.MANAGEMENT.value
+    assert entry_phase({"phase": "nonsense"}) == Phase.COMPLAINT.value

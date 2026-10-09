@@ -49,22 +49,40 @@ class _Encounter(FakeLLM):
         return super().__call__(system_prompt, human_prompt)
 
 
+STATE_KEYS = (
+    "messages",
+    "phase",
+    "patient",
+    "rubric",
+    "turns_in_phase",
+    "total_turns",
+    "phase_reasons",
+    "debrief",
+    "llm",
+)
+
+
 def _run(llm):
+    """Drive a whole encounter one learner turn per invoke, as the app does."""
     graph = get_graph()
-    return graph.invoke(
-        {
-            "messages": [{"role": "user", "content": "Hello"}],
-            "phase": Phase.COMPLAINT.value,
-            "patient": {"age": 54, "complaint": "My tooth hurts."},
-            "rubric": [{"phase": "history", "criteria": ["allergies"], "max_score": 8}],
-            "turns_in_phase": 0,
-            "total_turns": 0,
-            "debrief": None,
-            "phase_reasons": {},
-            "llm": llm,
-        },
-        config={"configurable": {"thread_id": "enc1"}, "recursion_limit": 200},
-    )
+    state = {
+        "messages": [],
+        "phase": Phase.COMPLAINT.value,
+        "patient": {"age": 54, "complaint": "My tooth hurts."},
+        "rubric": [{"phase": "history", "criteria": ["allergies"], "max_score": 8}],
+        "turns_in_phase": 0,
+        "total_turns": 0,
+        "debrief": None,
+        "phase_reasons": {},
+        "llm": llm,
+    }
+    config = {"configurable": {"thread_id": "enc1"}, "recursion_limit": 100}
+
+    # seven phases, each completing in one turn, then one invocation to grade
+    for _ in range(8):
+        out = graph.invoke(state, config=config)
+        state = {key: out[key] for key in STATE_KEYS}
+    return state
 
 
 def test_learner_who_asks_nothing_is_not_rewarded():

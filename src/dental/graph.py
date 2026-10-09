@@ -1,9 +1,13 @@
-"""Graph assembly: the phase machine.
+"""Graph assembly: the phase machine, one turn per invocation.
 
-Each clinical phase is a node with a self-loop. `should_advance` decides whether a
-phase is done, so the flow is agent-paced — the model decides, the graph enforces the
-ceiling. The node set is derived from PHASE_ORDER, so adding a phase means adding a
-node module and nothing here.
+An invocation plays exactly one encounter turn and returns. The phase the next
+invocation resumes at lives in `state["phase"]`, which `run_phase` advances.
+
+That matters for a chat UI: the learner sends a message, the patient replies, control
+returns. If the graph instead ran to the end of the encounter per invoke, every
+keystroke would replay all seven phases and grade them.
+
+LangGraph Studio drives this the same way, invoking once per input.
 """
 
 from typing import Any
@@ -21,7 +25,6 @@ from dental.nodes import (
     investigations,
     management,
 )
-from dental.phase_runner import run_phase, should_advance
 from dental.state import PHASE_ORDER, DentalState, Phase
 
 NODE_MODULES = {
@@ -52,23 +55,40 @@ def make_node(phase: Phase):
     return node
 
 
+def entry_phase(state: dict) -> str:
+    """Which node to start at: the phase the last invocation stopped in.
+
+    Falls back to the complaint when there is nothing to resume, so a fresh state
+    starts the encounter at the top.
+    """
+    saved = state.get("phase")
+    if saved:
+        try:
+            return Phase(saved).value
+        except ValueError:
+            pass
+    return Phase.COMPLAINT.value
+
+
 def build_graph() -> StateGraph:
+    """START -> the current phase -> END. One node, one turn, per invocation.
+
+    Every phase is reachable as an entry point, because entry_phase routes to
+    whichever one state says is current. No self-loops: the loop across turns is the
+    caller's, and `phase` in state is where it resumes.
+    """
     builder = StateGraph(DentalState)
 
     for phase in PHASE_ORDER:
         builder.add_node(phase.value, make_node(phase))
+        builder.add_edge(phase.value, END)  # one turn per invocation
 
     builder.add_node(Phase.DEBRIEF.value, make_node(Phase.DEBRIEF))
-    builder.add_edge(START, Phase.COMPLAINT.value)
-
-    # One conditional edge per phase, and no static self-loop alongside it: both
-    # would fire, writing `phase` twice in one step. should_advance returns either
-    # the same phase (spend another turn here) or the next one.
-    destinations = {phase.value: phase.value for phase in Phase}
-    for phase in PHASE_ORDER:
-        builder.add_conditional_edges(phase.value, should_advance, destinations)
-
     builder.add_edge(Phase.DEBRIEF.value, END)
+
+    builder.add_conditional_edges(
+        START, entry_phase, {phase.value: phase.value for phase in Phase}
+    )
     return builder
 
 

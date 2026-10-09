@@ -9,7 +9,14 @@ def node_debrief(state: dict, llm=None) -> dict:
 
     Reads the live `llm` from state the same way the phase nodes do, so one fake
     covers a whole traversal.
+
+    Idempotent: once a debrief exists it is returned unchanged. The app reruns on
+    every interaction, and grading is the slowest call in the app — without this
+    every rerun after the encounter would pay for a fresh grade.
     """
+    if state.get("debrief"):
+        return state
+
     model = llm if llm is not None else state.get("llm")
     debrief = grade(
         case=state.get("patient", {}),

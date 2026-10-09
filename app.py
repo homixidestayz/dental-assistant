@@ -25,10 +25,11 @@ def _reset(bundle, difficulty: str) -> None:
     st.session_state.rubric = [r.model_dump() for r in bundle.rubric]
     st.session_state.messages = []
     st.session_state.phase = Phase.COMPLAINT.value
-    st.session_state.phase_reasons = {}
-    st.session_state.total_turns = 0
-    st.session_state.debrief = None
-    st.session_state.revealed = set()
+    st.session_state["phase_reasons"] = {}
+    st.session_state["turns_in_phase"] = 0
+    st.session_state["total_turns"] = 0
+    st.session_state["debrief"] = None
+    st.session_state["revealed"] = set()
     st.session_state.difficulty = difficulty
     st.session_state.thread_id = f"enc-{len(st.session_state.get('all_threads', []))}"
     st.session_state.all_threads = st.session_state.get("all_threads", []) + [
@@ -103,6 +104,38 @@ def _note_revealed_findings() -> None:
     st.session_state["revealed"] = revealed
 
 
+def _advance_once() -> None:
+    """One graph invocation: the phase in state plays a single turn.
+
+    The graph is a one-turn-per-invocation machine. `phase` and the turn counters
+    live in session state and are carried into the call, so each learner message
+    advances exactly one phase and nothing replays.
+    """
+    graph = get_graph()
+    state = {
+        "messages": st.session_state["messages"],
+        "phase": st.session_state["phase"],
+        "patient": st.session_state["case"],
+        "rubric": st.session_state["rubric"],
+        "turns_in_phase": st.session_state["turns_in_phase"],
+        "total_turns": st.session_state["total_turns"],
+        "phase_reasons": st.session_state["phase_reasons"],
+        "debrief": st.session_state["debrief"],
+        "llm": get_llm(),
+    }
+    config = {
+        "configurable": {"thread_id": st.session_state["thread_id"]},
+        "recursion_limit": 100,
+    }
+    out = graph.invoke(state, config=config)
+    st.session_state["messages"] = out["messages"]
+    st.session_state["phase"] = out["phase"]
+    st.session_state["phase_reasons"] = out.get("phase_reasons", {})
+    st.session_state["turns_in_phase"] = out.get("turns_in_phase", 0)
+    st.session_state["total_turns"] = out.get("total_turns", 0)
+    st.session_state["debrief"] = out.get("debrief")
+
+
 def _render_chat() -> None:
     st.subheader("Encounter")
     phase = Phase(st.session_state.get("phase", Phase.COMPLAINT.value))
@@ -121,6 +154,18 @@ def _render_chat() -> None:
         st.info("Start an encounter from the sidebar.")
         return
 
+    # The encounter ends when a phase advances to DEBRIEF. Grading is its own
+    # invocation, kicked off here rather than by the learner typing again.
+    if phase is Phase.DEBRIEF and not st.session_state.get("debrief"):
+        try:
+            _advance_once()
+        except Exception as exc:
+            st.error(f"Grading failed: {exc}")
+            st.caption("Your transcript is kept. Use Re-grade below to retry.")
+        else:
+            st.rerun()
+        return
+
     prompt = st.chat_input("Speak to the patient…")
     if not prompt:
         return
@@ -132,25 +177,7 @@ def _render_chat() -> None:
     _note_revealed_findings()
 
     try:
-        graph = get_graph()
-        state = {
-            "messages": st.session_state["messages"],
-            "phase": st.session_state["phase"],
-            "patient": st.session_state["case"],
-            "rubric": st.session_state["rubric"],
-            "turns_in_phase": 0,
-            "total_turns": st.session_state["total_turns"],
-            "phase_reasons": st.session_state["phase_reasons"],
-            "debrief": None,
-            "llm": get_llm(),
-        }
-        config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
-        out = graph.invoke(state, config=config)
-        st.session_state["messages"] = out["messages"]
-        st.session_state["phase"] = out["phase"]
-        st.session_state["phase_reasons"] = out.get("phase_reasons", {})
-        st.session_state["total_turns"] = out.get("total_turns", 0)
-        st.session_state["debrief"] = out.get("debrief")
+        _advance_once()
     except NoProviderConfigured as exc:
         st.error(str(exc))
     except Exception as exc:
@@ -217,6 +244,7 @@ def main() -> None:
         ("messages", []),
         ("phase", Phase.COMPLAINT.value),
         ("phase_reasons", {}),
+        ("turns_in_phase", 0),
         ("total_turns", 0),
         ("debrief", None),
         ("revealed", set()),
