@@ -14,7 +14,7 @@ and the phase counter in state is where the next invocation resumes. A caller th
 wants a whole encounter in one go must drive it turn by turn, as `app.py` does.
 """
 
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -111,3 +111,10 @@ def get_graph(checkpointer=None) -> CompiledStateGraph:
 
         checkpointer = MemorySaver()
     return build_graph().compile(checkpointer=checkpointer)
+
+
+async def stream_graph(state: dict, config: dict) -> AsyncGenerator[dict, None]:
+    """Stream a single turn, yielding partial state updates as the model streams."""
+    g = get_graph()
+    async for chunk in g.astream(state, config=config, stream_mode="updates"):
+        yield chunk

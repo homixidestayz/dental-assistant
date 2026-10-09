@@ -3,6 +3,7 @@
 Run it with:  streamlit run app.py
 """
 
+import asyncio
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -11,7 +12,7 @@ load_dotenv()
 from dental.case_gen import DIFFICULTIES, generate_case  # noqa: E402
 from dental.grader import band_for, grade  # noqa: E402
 from dental.llm import NoProviderConfigured, get_llm  # noqa: E402
-from dental.graph import get_graph  # noqa: E402
+from dental.graph import get_graph, stream_graph  # noqa: E402
 from dental.phase_runner import PHASE_GOALS  # noqa: E402
 from dental.state import Phase, LANGUAGE_LABELS, UI_TEXT  # noqa: E402
 
@@ -161,9 +162,11 @@ def _render_chat() -> None:
     if phase is not Phase.DEBRIEF:
         st.caption(f"{_t('phase')}: **{PHASE_LABELS[phase]}** — {PHASE_GOALS[phase]}")
 
+    # Render existing messages
     for message in st.session_state.get("messages", []):
         role = getattr(message, "type", "user")
-        with st.chat_message("user" if role == "human" else "assistant"):
+        avatar = "👤" if role == "human" else "🦷"
+        with st.chat_message("user" if role == "human" else "assistant", avatar=avatar):
             st.write(getattr(message, "content", message))
 
     if phase is Phase.DEBRIEF:
@@ -189,14 +192,69 @@ def _render_chat() -> None:
     if not prompt:
         return
 
-    from langchain_core.messages import HumanMessage
+    from langchain_core.messages import HumanMessage, AIMessage
 
-    st.session_state["messages"].append(HumanMessage(content=prompt))
+    # Add user message immediately
+    user_msg = HumanMessage(content=prompt)
+    st.session_state["messages"].append(user_msg)
     st.session_state["total_turns"] += 1
     _note_revealed_findings()
 
+    # Show user message immediately
+    with st.chat_message("user", avatar="👤"):
+        st.write(prompt)
+
+    # Stream the patient's response
     try:
-        _advance_once()
+        graph = get_graph()
+        state = {
+            "messages": st.session_state["messages"],
+            "phase": st.session_state["phase"],
+            "patient": st.session_state["case"],
+            "rubric": st.session_state["rubric"],
+            "turns_in_phase": st.session_state["turns_in_phase"],
+            "total_turns": st.session_state["total_turns"],
+            "phase_reasons": st.session_state["phase_reasons"],
+            "debrief": st.session_state["debrief"],
+            "language": st.session_state.get("language", "en"),
+            "llm": get_llm(),
+        }
+        config = {
+            "configurable": {"thread_id": st.session_state["thread_id"]},
+            "recursion_limit": 100,
+        }
+
+        # Show typing indicator and stream response
+        with st.chat_message("assistant", avatar="🦷"):
+            placeholder = st.empty()
+            placeholder.markdown("🦷  *typing...*")
+
+            # Run the graph and stream updates
+            out = None
+            for chunk in graph.stream(state, config=config, stream_mode="updates"):
+                for node_name, node_output in chunk.items():
+                    if node_name == "messages" and node_output:
+                        for msg in node_output:
+                            if hasattr(msg, "type") and msg.type == "ai":
+                                placeholder.markdown(msg.content + "▌")
+
+            # Final invoke to get complete state
+            out = graph.invoke(state, config=config)
+
+            # Final message without cursor
+            if out and out.get("messages"):
+                for msg in out["messages"]:
+                    if hasattr(msg, "type") and msg.type == "ai":
+                        placeholder.markdown(msg.content)
+                        break
+
+        st.session_state["messages"] = out["messages"]
+        st.session_state["phase"] = out["phase"]
+        st.session_state["phase_reasons"] = out.get("phase_reasons", {})
+        st.session_state["turns_in_phase"] = out.get("turns_in_phase", 0)
+        st.session_state["total_turns"] = out.get("total_turns", 0)
+        st.session_state["debrief"] = out.get("debrief")
+
     except NoProviderConfigured as exc:
         st.error(str(exc))
     except Exception as exc:
