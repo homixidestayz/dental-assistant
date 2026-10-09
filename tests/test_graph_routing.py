@@ -5,13 +5,35 @@ from dental.state import TURN_CEILING, Phase
 from conftest import FakeLLM, FakeResponse
 
 
+def _debrief_response(score=5, max_score=7):
+    return FakeResponse(
+        structured_response={
+            "phase_scores": [
+                {
+                    "phase": "history",
+                    "score": score,
+                    "max_score": max_score,
+                    "covered": ["chief complaint"],
+                    "missed": ["drug allergies"],
+                    "reasoning": "partial history",
+                }
+            ],
+            "overall": 71,
+            "band": "competent",
+            "focus_areas": ["ask about drug allergies"],
+            "strengths": ["clear opening"],
+        }
+    )
+
+
 def _never_complete():
     return FakeLLM(
         structured_response={
             "patient_reply": "...",
             "phase_complete": False,
             "phase_reason": "",
-        }
+        },
+        debrief_response=_debrief_response(),
     )
 
 
@@ -21,16 +43,19 @@ def _always_complete():
             "patient_reply": "yes",
             "phase_complete": True,
             "phase_reason": "",
-        }
+        },
+        debrief_response=_debrief_response(),
     )
 
 
-def _state(phase=Phase.COMPLAINT, llm=None):
+def _state(phase=Phase.COMPLAINT, llm=None, rubric=None):
     state = {
         "messages": [],
         "phase": phase.value,
-        "patient": {},
-        "rubric": [],
+        "patient": {"age": 54, "complaint": "My tooth is killing me."},
+        # The debrief node is live, and grade() requires the rubric the case was
+        # generated with. Routing tests supply one.
+        "rubric": rubric if rubric is not None else [{"phase": "history", "criteria": ["allergies"], "max_score": 7}],
         "turns_in_phase": 0,
         "total_turns": 0,
         "debrief": None,
@@ -99,6 +124,8 @@ def test_a_single_stuck_phase_is_bounded_not_the_whole_encounter():
 
     class Scripted(FakeLLM):
         def __call__(self, system_prompt="", human_prompt=""):
+            if "examiner" in system_prompt.lower():
+                return self.debrief_response
             self.calls.append((system_prompt, human_prompt))
             turn = int(human_prompt.split("Turn ")[1].split(".")[0])
             # Never complete during the first two phases' worth of turns; the
@@ -113,7 +140,7 @@ def test_a_single_stuck_phase_is_bounded_not_the_whole_encounter():
 
     graph = get_graph()
     out = graph.invoke(
-        _state(llm=Scripted()),
+        _state(llm=Scripted(debrief_response=_debrief_response())),
         config={"configurable": {"thread_id": "t6"}, "recursion_limit": 500},
     )
     # complaint and history each capped at 8, then the remaining 5 phases at 1 turn
@@ -128,10 +155,11 @@ def test_injected_llm_is_used_by_the_nodes():
     llm = _always_complete()
     graph = get_graph()
     graph.invoke(
-        {**_state(), "llm": llm},
+        _state(llm=llm),
         config={"configurable": {"thread_id": "t4"}, "recursion_limit": 200},
     )
-    assert len(llm.calls) == len(PHASE_ORDER_EXPECTED)
+    # seven phase turns plus one grading call
+    assert len(llm.calls) == len(PHASE_ORDER_EXPECTED) + 1
 
 
 def test_graph_export_exists_for_langgraph_json():

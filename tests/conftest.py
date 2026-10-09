@@ -28,10 +28,11 @@ class FakeLLM:
     responses: list = field(default_factory=list)
     debrief_response: FakeResponse | None = None
     calls: list = field(default_factory=list)
-
     def __call__(self, system_prompt: str = "", human_prompt: str = "") -> FakeResponse:
         self.calls.append((system_prompt, human_prompt))
-        if self.debrief_response is not None and not self.responses:
+        # The grading call is distinguished by its prompt, so one fake can serve a
+        # whole encounter plus its debrief.
+        if self.debrief_response is not None and "examiner" in system_prompt.lower():
             return self.debrief_response
         if self.responses:
             return self.responses.pop(0)
