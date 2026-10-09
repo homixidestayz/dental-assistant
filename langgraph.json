@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "dental": "./src/dental/graph.py:graph"
+  },
+  "env": ".env"
+}
