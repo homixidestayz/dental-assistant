@@ -32,6 +32,31 @@ def test_build_patient_prompt_includes_language_instruction():
     assert "french" in prompt.lower()
 
 
+def test_arabic_patient_prompt_asks_for_algerian_darja():
+    """Arabic patients speak Algerian Darja, not Modern Standard Arabic."""
+    patient = {"age": 54, "complaint": "my tooth hurts"}
+    prompt = build_patient_prompt(patient, Phase.HISTORY, language="ar")
+    lowered = prompt.lower()
+    assert "algerian" in lowered
+    assert "darja" in lowered or "dialect" in lowered
+
+
+def test_arabic_patient_prompt_keeps_phase_reason_in_standard_arabic():
+    """Only the patient's speech is dialect; the pacing reason stays formal."""
+    patient = {"age": 54, "complaint": "my tooth hurts"}
+    prompt = build_patient_prompt(patient, Phase.HISTORY, language="ar")
+    assert "standard arabic" in prompt.lower()
+
+
+def test_non_arabic_patient_prompt_has_no_algerian_instruction():
+    """French and English patients must not pick up the Darja instruction."""
+    patient = {"age": 54, "complaint": "my tooth hurts"}
+    for lang in ("en", "fr"):
+        prompt = build_patient_prompt(patient, Phase.HISTORY, language=lang)
+        assert "algerian" not in prompt.lower()
+
+
+
 def test_run_phase_accepts_language_and_passes_it_to_prompt():
     from conftest import FakeLLM
 

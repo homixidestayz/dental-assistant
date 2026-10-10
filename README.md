@@ -1,4 +1,4 @@
-# Dental OSCE Agent
+# DentOSCE Agent
 
 An OSCE-style dental trainer. It invents a patient case, plays the patient in free
 text, walks the encounter through clinical phases at its own pace, then grades the

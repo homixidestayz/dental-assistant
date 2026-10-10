@@ -44,7 +44,30 @@ Difficulty shapes case complexity and how much is hidden:
 Write the entire case in {lang_name}. The complaint must be in the patient's own words
 in {lang_name}, not clinical language. All history fields, hidden findings, diagnosis,
 differentials, and investigation results must be in {lang_name}.
+
+{register_note}
 """
+
+
+def _arabic_register_note() -> str:
+    """Arabic must be written as Modern Standard Arabic, never a spoke dialect.
+
+    Models drift to Egyptian when simply told "Arabic", and the patient card is a
+    clinical record — MSA register. The patient's spoken Darja is a *separate*
+    instruction in the encounter prompt; the record itself stays فصحى.
+    """
+    return (
+        "Write in Modern Standard Arabic (العربية الفصحى) only — the written "
+        "register, not a spoken dialect. Do not use Egyptian, Algerian, Gulf, or "
+        "Levantine Arabic."
+    )
+
+
+def _register_note(language: str) -> str:
+    """Extra register instruction for languages that need one; empty otherwise."""
+    if language == "ar":
+        return _arabic_register_note()
+    return ""
 
 
 def _invoke_structured(llm: Any, schema: type, system: str, human: str) -> Any:
@@ -67,5 +90,9 @@ def generate_case(difficulty: str = "mid", language: str = "en", llm: Any = None
         llm,
         CaseBundle,
         _SYSTEM,
-        _HUMAN.format(difficulty=difficulty, lang_name=lang_name),
+        _HUMAN.format(
+            difficulty=difficulty,
+            lang_name=lang_name,
+            register_note=_register_note(language),
+        ),
     )

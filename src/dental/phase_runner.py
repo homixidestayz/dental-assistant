@@ -68,6 +68,25 @@ _CONSTRAINTS = """Rules you must never break:
 """
 
 
+# Arabic patients speak everyday Algerian Darja, not Modern Standard Arabic —
+# students should hear the consultation the way it actually sounds. Only the
+# patient's spoken words are dialect; the pacing reason stays formal.
+_ALGERIAN_DARJA_INSTRUCTION = (
+    "Speak in Algerian Arabic (Darja) — the everyday spoken dialect of Algeria — "
+    "written in Arabic script. Use natural Algerian words and expressions (for "
+    "example: واش، راهو، بزاف، صحّا، علاش). Do not use Modern Standard Arabic, and "
+    "do not use Egyptian or Gulf dialects. Write patient_reply in Algerian Darja. "
+    "Write the phase_reason field in clear Modern Standard Arabic, not in dialect."
+)
+
+
+def _speech_instruction(language: str, lang_name: str) -> str:
+    """How the patient should speak, and how the pacing reason should read."""
+    if language == "ar":
+        return _ALGERIAN_DARJA_INSTRUCTION
+    return f"Reply in {lang_name}. All your responses must be in {lang_name}."
+
+
 def build_patient_prompt(patient: dict, phase: Phase, language: str = "en") -> str:
     """The patient persona, the phase goal, and the standing constraints."""
     age = patient.get("age", "an adult")
@@ -94,7 +113,7 @@ def build_patient_prompt(patient: dict, phase: Phase, language: str = "en") -> s
         f"Right now the candidate is working on: {PHASE_GOALS[phase]}",
         "",
         _CONSTRAINTS,
-        f"Reply in {lang_name}. All your responses must be in {lang_name}.",
+        _speech_instruction(language, lang_name),
         "",
         "After your reply, decide whether this phase is complete — that is, "
         "whether the candidate has covered everything this stage needs. Set "

@@ -1,4 +1,4 @@
-"""Dental OSCE simulator.
+"""DentOSCE simulator.
 
 Run it with:  streamlit run app.py
 """
@@ -44,14 +44,27 @@ from dental.graph import get_graph, stream_graph  # noqa: E402
 from dental.phase_runner import PHASE_GOALS  # noqa: E402
 from dental.state import Phase, LANGUAGE_LABELS, UI_TEXT  # noqa: E402
 
-st.set_page_config(page_title="Dental OSCE", layout="wide", page_icon="🦷")
+st.set_page_config(page_title="DentOSCE", layout="wide", page_icon="🦷")
 
 # Light, high-contrast clinic theme. Deliberately minimal: no forced text
 # colours or dark backgrounds that could make content unreadable.
 st.markdown(
     """
 <style>
-    .block-container { padding-top: 2rem; }
+    .block-container, [data-testid="stMainBlockContainer"] {
+        padding-top: 2rem;
+        max-width: 1080px;
+        margin: 0 auto;
+    }
+
+    /* Long words or pasted strings must never create a sideways scrollbar. */
+    .stApp, .stMarkdown, [data-testid="stChatMessage"], [data-testid="stMetricValue"] {
+        overflow-wrap: anywhere;
+    }
+    [data-testid="stMetric"] { min-width: 0; }
+
+    /* The phone copies of the setup/patient panel: hidden on desktop. */
+    .st-key-mobile_panel_setup, .st-key-mobile_panel_card { display: none; }
 
     .clinic-header {
         background: linear-gradient(135deg, #0c4a6e 0%, #0369a1 100%);
@@ -110,6 +123,26 @@ st.markdown(
         background: #f8fafc;
         border-right: 1px solid #e2e8f0;
     }
+
+    @media (max-width: 640px) {
+        .block-container, [data-testid="stMainBlockContainer"] {
+            padding: 0.75rem 0.75rem 4rem;
+        }
+        .clinic-header { padding: 0.9rem 1rem; border-radius: 10px; }
+        .clinic-header h1 { font-size: 1.3rem; }
+        .clinic-header p { font-size: 0.82rem; }
+
+        /* No sidebar, and no toggle to open one, on a phone. */
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        [data-testid="stExpandSidebarButton"] {
+            display: none !important;
+        }
+
+        .st-key-mobile_panel_setup, .st-key-mobile_panel_card { display: block; }
+        [data-testid="stChatMessage"] { padding: 0.35rem 0.5rem; }
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -144,22 +177,43 @@ def _reset(bundle, difficulty: str) -> None:
     ]
 
 
-def _render_sidebar() -> None:
-    st.sidebar.title("🦷 " + _t("station"))
-    difficulty = st.sidebar.selectbox(
-        _t("difficulty"), DIFFICULTIES, index=DIFFICULTIES.index("mid")
-    )
+def _on_language_change(changed_key: str) -> None:
+    """Mirror a language change to the other selector and the whole UI.
 
-    language = st.sidebar.selectbox(
+    The selector exists twice (desktop sidebar and phone panel) with different
+    widget keys, so a change in one has to be copied to the other or the two
+    would drift and fight over `st.session_state.language`.
+    """
+    chosen = st.session_state.get(changed_key, st.session_state.get("language", "en"))
+    st.session_state["language"] = chosen
+    other = "language_mobile" if changed_key == "language_desktop" else "language_desktop"
+    st.session_state[other] = chosen
+
+
+def _encounter_setup(container, key_prefix: str) -> None:
+    """Difficulty, language, and the start button.
+
+    Rendered into the sidebar on desktop and into the main column on phones, so
+    it takes a container and a key prefix to keep the two copies' widget IDs
+    distinct (both copies share the same labels).
+    """
+    difficulty = container.selectbox(
+        _t("difficulty"),
+        DIFFICULTIES,
+        key=f"difficulty_{key_prefix}",
+    )
+    container.selectbox(
         _t("language"),
         list(LANGUAGE_LABELS.keys()),
-        index=list(LANGUAGE_LABELS.keys()).index(st.session_state.get("language", "en")),
         format_func=lambda k: LANGUAGE_LABELS[k],
+        key=f"language_{key_prefix}",
+        on_change=_on_language_change,
+        args=(f"language_{key_prefix}",),
     )
-    if language != st.session_state.get("language", "en"):
-        st.session_state.language = language
 
-    if st.sidebar.button(_t("start_encounter"), type="primary"):
+    if container.button(
+        _t("start_encounter"), type="primary", key=f"start_{key_prefix}"
+    ):
         try:
             with st.spinner(_t("generating_patient")):
                 bundle = generate_case(
@@ -169,24 +223,29 @@ def _render_sidebar() -> None:
             _reset(bundle, difficulty)
             st.rerun()
         except NoProviderConfigured as exc:
-            st.sidebar.error(str(exc))
+            container.error(str(exc))
         except Exception as exc:
-            st.sidebar.error(f"Could not generate a case: {exc}")
+            container.error(f"Could not generate a case: {exc}")
 
-    st.sidebar.divider()
-    st.sidebar.subheader(_t("patient_card"))
+
+def _patient_card(container) -> None:
+    """The patient's known history and how much the learner has uncovered.
+
+    Container-agnostic so the desktop sidebar and the phone panel can share it.
+    Pure text, so rendering it twice creates no duplicate widget IDs.
+    """
     case = st.session_state.get("case")
     if not case:
-        st.sidebar.caption(_t("no_patient"))
+        container.caption(_t("no_patient"))
         return
 
-    st.sidebar.markdown(f"**{case.get('age', '?')}-year-old {case.get('sex', '')}**")
-    st.sidebar.caption(f"“{case.get('complaint', '')}”")
+    container.markdown(f"**{case.get('age', '?')}-year-old {case.get('sex', '')}**")
+    container.caption(f"“{case.get('complaint', '')}”")
 
     for label in ("medical_history", "drug_history", "allergies"):
         values = case.get(label) or []
         if values:
-            st.sidebar.markdown(
+            container.markdown(
                 f'<div class="patient-card-item">'
                 f'<div class="patient-card-label">{_t(label)}</div>'
                 f'<div class="patient-card-value">{" • ".join(values)}</div>'
@@ -199,11 +258,38 @@ def _render_sidebar() -> None:
     unrevealed = [
         fact for i, fact in enumerate(hidden) if fact not in revealed and i not in revealed
     ]
-    st.sidebar.divider()
+    container.divider()
     if unrevealed:
-        st.sidebar.caption(_t("uncovered_count").format(count=len(unrevealed)))
+        container.caption(_t("uncovered_count").format(count=len(unrevealed)))
     else:
-        st.sidebar.success(_t("all_uncovered"))
+        container.success(_t("all_uncovered"))
+
+
+def _render_sidebar() -> None:
+    """The desktop sidebar: station title, setup controls, and the patient card."""
+    st.sidebar.title("🦷 " + _t("station"))
+    _encounter_setup(st.sidebar, "desktop")
+    st.sidebar.divider()
+    st.sidebar.subheader(_t("patient_card"))
+    _patient_card(st.sidebar)
+
+
+def _render_mobile_panel() -> None:
+    """Phones only: the same setup and patient card inline above the chat.
+
+    Under 640px the sidebar and its toggle are hidden by CSS, so these keyed
+    containers (hidden on desktop, shown on phones) keep every control reachable.
+    """
+    with st.container(key="mobile_panel_setup"):
+        with st.expander(
+            _t("start_encounter"), expanded=not st.session_state.get("case")
+        ):
+            _encounter_setup(st, "mobile")
+    with st.container(key="mobile_panel_card"):
+        with st.expander(
+            _t("patient_card"), expanded=bool(st.session_state.get("case"))
+        ):
+            _patient_card(st)
 
 
 def _note_revealed_findings() -> None:
@@ -417,7 +503,7 @@ def _render_debrief() -> None:
 def main() -> None:
     st.markdown(
         '<div class="clinic-header">'
-        "<h1>🦷 Dental OSCE</h1>"
+        "<h1>🦷 DentOSCE</h1>"
         "<p>A practice patient who will not volunteer anything you do not ask for, "
         "and will not correct you until the debrief.</p>"
         "</div>",
@@ -440,7 +526,17 @@ def main() -> None:
         if key not in st.session_state:
             st.session_state[key] = default
 
+    # Seed the duplicated language/difficulty selectors before they render, so a
+    # keyed widget never needs a default value it would then have to override.
+    for selector in ("language_desktop", "language_mobile"):
+        if selector not in st.session_state:
+            st.session_state[selector] = st.session_state.get("language", "en")
+    for selector in ("difficulty_desktop", "difficulty_mobile"):
+        if selector not in st.session_state:
+            st.session_state[selector] = "mid"
+
     _render_sidebar()
+    _render_mobile_panel()
     _render_chat()
     _render_debrief()
 

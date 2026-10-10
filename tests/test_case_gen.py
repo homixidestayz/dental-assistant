@@ -58,3 +58,30 @@ def test_rubric_is_generated_from_the_case_not_generic_dentistry():
     assert "rubric" in system_prompt
     assert "patient" in system_prompt
     assert "criteria" in system_prompt
+
+
+def test_arabic_case_is_forced_to_modern_standard_arabic():
+    """The patient card is a clinical record: it must read as Standard Arabic.
+
+    Models drift to Egyptian when told just "Arabic", so the prompt has to be
+    explicit. (The patient's spoken Darja is a separate, later instruction.)
+    """
+    llm = _scripted()
+    generate_case(language="ar", llm=llm)
+    human = llm.calls[0][1].lower()
+    assert "modern standard arabic" in human
+
+
+def test_arabic_case_explicitly_forbids_spoken_dialects():
+    llm = _scripted()
+    generate_case(language="ar", llm=llm)
+    human = llm.calls[0][1].lower()
+    assert "egyptian" in human
+    assert "dialect" in human
+
+
+def test_non_arabic_case_prompt_is_unaffected():
+    llm = _scripted()
+    generate_case(language="fr", llm=llm)
+    human = llm.calls[0][1].lower()
+    assert "modern standard arabic" not in human
