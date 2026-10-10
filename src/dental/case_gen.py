@@ -2,7 +2,6 @@
 
 from typing import Any
 
-from dental.llm import get_llm
 from dental.model_call import invoke_structured
 from dental.schemas import CaseBundle
 
@@ -62,8 +61,6 @@ def generate_case(difficulty: str = "mid", language: str = "en", llm: Any = None
         raise ValueError(
             f"difficulty must be one of {DIFFICULTIES}, got {difficulty!r}"
         )
-    if llm is None:
-        llm = get_llm()
     from dental.state import LANGUAGE_LABELS
     lang_name = LANGUAGE_LABELS.get(language, "English")
     return _invoke_structured(

@@ -26,6 +26,7 @@ from dental.nodes import (
     diagnosis,
     examination,
     history,
+    intake,
     investigations,
     management,
 )
@@ -41,6 +42,9 @@ NODE_MODULES = {
     Phase.CLOSING: closing,
     Phase.DEBRIEF: debrief,
 }
+
+# The setup step: generate the patient when the state does not carry one yet.
+INTAKE = "intake"
 
 
 def make_node(phase: Phase):
@@ -59,12 +63,28 @@ def make_node(phase: Phase):
     return node
 
 
-def entry_phase(state: dict) -> str:
-    """Which node to start at: the phase the last invocation stopped in.
+def make_intake_node():
+    """The intake node: generate a patient for an empty state, else a no-op."""
+    fn = intake.node_intake
 
-    Falls back to the complaint when there is nothing to resume, so a fresh state
-    starts the encounter at the top.
+    def node(state: dict) -> dict:
+        llm: Any = state.get("llm")
+        return fn(state, llm=llm) if llm is not None else fn(state)
+
+    node.__name__ = "intake"
+    return node
+
+
+def entry_phase(state: dict) -> str:
+    """Which node to start at.
+
+    A state with no patient enters intake to generate one, so LangGraph Studio and
+    any other direct consumer starts from an empty input. Otherwise it resumes at
+    the phase the last invocation stopped in, falling back to the complaint when
+    there is nothing to resume.
     """
+    if not state.get("patient"):
+        return INTAKE
     saved = state.get("phase")
     if saved:
         try:
@@ -90,8 +110,13 @@ def build_graph() -> StateGraph:
     builder.add_node(Phase.DEBRIEF.value, make_node(Phase.DEBRIEF))
     builder.add_edge(Phase.DEBRIEF.value, END)
 
+    builder.add_node(INTAKE, make_intake_node())
+    builder.add_edge(INTAKE, END)
+
     builder.add_conditional_edges(
-        START, entry_phase, {phase.value: phase.value for phase in Phase}
+        START,
+        entry_phase,
+        {**{phase.value: phase.value for phase in Phase}, INTAKE: INTAKE},
     )
     return builder
 

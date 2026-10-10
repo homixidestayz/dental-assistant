@@ -66,6 +66,8 @@ UI_TEXT: dict[str, dict[str, str]] = {
         "debrief": "Debrief",
         "overall": "Overall",
         "per_phase": "Per phase",
+        "grading": "Grading your encounter…",
+        "grade_failed": "Grading failed: {error}",
         "work_on": "Work on these",
         "strengths": "What you did well",
         "regrade": "Re-grade",
@@ -95,6 +97,8 @@ UI_TEXT: dict[str, dict[str, str]] = {
         "debrief": "Débriefing",
         "overall": "Global",
         "per_phase": "Par phase",
+        "grading": "Évaluation de votre entretien…",
+        "grade_failed": "Échec de l'évaluation : {error}",
         "work_on": "À travailler",
         "strengths": "Points forts",
         "regrade": "Re-noter",
@@ -124,6 +128,8 @@ UI_TEXT: dict[str, dict[str, str]] = {
         "debrief": "التقرير",
         "overall": "الإجمالي",
         "per_phase": "لكل مرحلة",
+        "grading": "جاري تقييم مقابلتك…",
+        "grade_failed": "فشل التقييم: {error}",
         "work_on": "للعمل عليه",
         "strengths": "نقاط القوة",
         "regrade": "إعادة التقييم",
@@ -156,6 +162,7 @@ class DentalState(TypedDict, total=False):
     debrief: Any
     llm: Any
     language: str
+    difficulty: str
 
 
 def next_phase(phase: Phase) -> Phase:

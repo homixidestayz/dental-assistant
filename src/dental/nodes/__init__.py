@@ -10,6 +10,7 @@ from dental.nodes import (
     diagnosis,
     examination,
     history,
+    intake,
     investigations,
     management,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "diagnosis",
     "examination",
     "history",
+    "intake",
     "investigations",
     "management",
 ]

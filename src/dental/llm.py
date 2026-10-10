@@ -94,3 +94,22 @@ def get_llm() -> "object":
         )
     _, name, factory = found
     return factory()
+
+
+def available_llms() -> list:
+    """Every configured provider's model, in cascade order.
+
+    Used by the structured-call layer to fall back to the next provider when one
+    cannot return valid structured output. A provider whose key is set but whose
+    client cannot be constructed (missing optional dependency, say) is skipped rather
+    than sinking the whole call.
+    """
+    models = []
+    for env_key, _name, factory in PROVIDERS:
+        if not os.getenv(env_key, "").strip():
+            continue
+        try:
+            models.append(factory())
+        except Exception:  # noqa: BLE001 — an unusable provider is skipped, not fatal
+            continue
+    return models

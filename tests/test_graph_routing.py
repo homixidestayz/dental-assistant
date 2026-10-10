@@ -192,9 +192,15 @@ def test_get_graph_accepts_a_custom_checkpointer():
     assert compiled.checkpointer is not None
 
 
-def test_a_fresh_state_starts_at_the_complaint():
-    from dental.graph import entry_phase
+def test_a_fresh_state_enters_intake_to_generate_a_patient():
+    from dental.graph import INTAKE, entry_phase
 
-    assert entry_phase({}) == Phase.COMPLAINT.value
-    assert entry_phase({"phase": Phase.MANAGEMENT.value}) == Phase.MANAGEMENT.value
-    assert entry_phase({"phase": "nonsense"}) == Phase.COMPLAINT.value
+    # No patient yet: the graph generates one before the encounter starts.
+    assert entry_phase({}) == INTAKE
+    assert entry_phase({"patient": {}}) == INTAKE
+    # A patient is present: resume at the phase in state.
+    assert entry_phase({"patient": {"age": 40}}) == Phase.COMPLAINT.value
+    assert entry_phase(
+        {"patient": {"age": 40}, "phase": Phase.MANAGEMENT.value}
+    ) == Phase.MANAGEMENT.value
+    assert entry_phase({"patient": {"age": 40}, "phase": "nonsense"}) == Phase.COMPLAINT.value

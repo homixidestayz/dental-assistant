@@ -4,384 +4,116 @@ Run it with:  streamlit run app.py
 """
 
 import asyncio
+import os
+import sys
+from pathlib import Path
+
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Streamlit Community Cloud installs from requirements.txt only and does not
+# install this package, so make the local `src/` tree importable here. Harmless
+# when the package is already installed.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+# Community Cloud delivers secrets through st.secrets; the provider cascade reads
+# os.environ. Mirror the provider keys across when present, and do nothing locally.
+try:
+    _secret_keys = (
+        "GROQ_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "GROQ_MODEL",
+        "GEMINI_MODEL",
+        "OPENROUTER_MODEL",
+        "OPENAI_MODEL",
+    )
+    for _secret_key in _secret_keys:
+        if _secret_key in st.secrets and not os.getenv(_secret_key):
+            os.environ[_secret_key] = str(st.secrets[_secret_key])
+except Exception:
+    pass
+
 from dental.case_gen import DIFFICULTIES, generate_case  # noqa: E402
 from dental.grader import band_for, grade  # noqa: E402
-from dental.llm import NoProviderConfigured, get_llm  # noqa: E402
+from dental.llm import NoProviderConfigured  # noqa: E402
 from dental.graph import get_graph, stream_graph  # noqa: E402
 from dental.phase_runner import PHASE_GOALS  # noqa: E402
 from dental.state import Phase, LANGUAGE_LABELS, UI_TEXT  # noqa: E402
 
 st.set_page_config(page_title="Dental OSCE", layout="wide", page_icon="🦷")
 
-# Dental clinic theme CSS
-st.markdown("""
+# Light, high-contrast clinic theme. Deliberately minimal: no forced text
+# colours or dark backgrounds that could make content unreadable.
+st.markdown(
+    """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    :root {
-        --dental-navy: #0d1b2a;
-        --dental-teal: #00b4d8;
-        --dental-teal-dark: #0096c7;
-        --dental-teal-light: #caf0f8;
-        --dental-white: #ffffff;
-        --dental-gray-50: #f8fafc;
-        --dental-gray-100: #f1f5f9;
-        --dental-gray-200: #e2e8f0;
-        --dental-gray-300: #cbd5e1;
-        --dental-gray-600: #475569;
-        --dental-gray-900: #0f172a;
-        --dental-red: #ef4444;
-        --dental-green: #22c55e;
-        --dental-amber: #f59e0b;
+    .block-container { padding-top: 2rem; }
+
+    .clinic-header {
+        background: linear-gradient(135deg, #0c4a6e 0%, #0369a1 100%);
+        padding: 1.25rem 1.75rem;
+        border-radius: 12px;
+        margin-bottom: 1.25rem;
     }
-    
-    .stApp {
-        background: linear-gradient(135deg, var(--dental-gray-50) 0%, var(--dental-teal-light) 100%);
-        font-family: 'Inter', sans-serif;
-    }
-    
-    section[data-testid="stSidebar"] {
-        background: var(--dental-white);
-        border-right: 1px solid var(--dental-gray-200);
-        box-shadow: 4px 0 20px rgba(13, 27, 42, 0.08);
-    }
-    
-    section[data-testid="stSidebar"] > div:first-child {
-        padding-top: 2rem;
-    }
-    
-    .dental-header {
-        background: linear-gradient(135deg, var(--dental-navy) 0%, var(--dental-teal-dark) 100%);
-        padding: 2rem 2.5rem;
-        border-radius: 16px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 10px 40px rgba(13, 27, 42, 0.15);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .dental-header::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        right: -50%;
-        width: 100%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(0, 180, 216, 0.15) 0%, transparent 70%);
-        animation: pulse 8s ease-in-out infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { transform: scale(1); opacity: 0.5; }
-        50% { transform: scale(1.1); opacity: 0.8; }
-    }
-    
-    .dental-header h1 {
-        color: var(--dental-white);
+    .clinic-header h1 {
+        color: #ffffff;
+        font-size: 1.75rem;
         font-weight: 700;
-        font-size: 2.25rem;
         margin: 0;
-        letter-spacing: -0.02em;
-        position: relative;
-        z-index: 1;
     }
-    
-    .dental-header .subtitle {
-        color: var(--dental-teal-light);
-        font-weight: 400;
-        font-size: 1.1rem;
-        margin-top: 0.5rem;
-        position: relative;
-        z-index: 1;
-    }
-    
-    .phase-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 1rem;
-        background: var(--dental-white);
-        border-radius: 50px;
-        box-shadow: 0 2px 12px rgba(13, 27, 42, 0.08);
-        border: 1px solid var(--dental-gray-200);
-        margin-bottom: 1rem;
-    }
-    
-    .phase-badge .dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: var(--dental-teal);
-        animation: blink 2s ease-in-out infinite;
-    }
-    
-    @keyframes blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
-    }
-    
-    .phase-badge .text {
-        font-weight: 600;
-        color: var(--dental-navy);
+    .clinic-header p {
+        color: #bae6fd;
         font-size: 0.95rem;
+        margin: 0.35rem 0 0 0;
     }
-    
-    [data-testid="stChatMessage"] {
-        background: var(--dental-white);
-        border-radius: 16px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 0.75rem;
-        box-shadow: 0 2px 12px rgba(13, 27, 42, 0.06);
-        border: 1px solid var(--dental-gray-100);
-        transition: all 0.2s ease;
-    }
-    
-    [data-testid="stChatMessage"]:hover {
-        box-shadow: 0 4px 20px rgba(13, 27, 42, 0.1);
-        border-color: var(--dental-gray-200);
-    }
-    
-    [data-testid="stChatMessage"][aria-label="user"] {
-        border-left: 4px solid var(--dental-teal);
-    }
-    
-    [data-testid="stChatMessage"][aria-label="assistant"] {
-        border-left: 4px solid var(--dental-amber);
-    }
-    
-    .stChatInput textarea {
-        border-radius: 12px !important;
-        border: 2px solid var(--dental-gray-200) !important;
-        font-family: 'Inter', sans-serif !important;
-        font-size: 1rem !important;
-        padding: 0.875rem 1rem !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    .stChatInput textarea:focus {
-        border-color: var(--dental-teal) !important;
-        box-shadow: 0 0 0 4px var(--dental-teal-light) !important;
-    }
-    
-    [data-testid="stMetric"] {
-        background: var(--dental-white);
-        border-radius: 16px;
-        padding: 1.5rem;
-        border: 1px solid var(--dental-gray-200);
-        box-shadow: 0 2px 12px rgba(13, 27, 42, 0.05);
-        transition: all 0.2s ease;
-    }
-    
-    [data-testid="stMetric"]:hover {
-        box-shadow: 0 4px 20px rgba(13, 27, 42, 0.1);
-    }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--dental-gray-600) !important;
-        font-weight: 500 !important;
-        font-size: 0.9rem !important;
-    }
-    
-    [data-testid="stMetricValue"] {
-        color: var(--dental-navy) !important;
-        font-weight: 700 !important;
-        font-size: 2.5rem !important;
-    }
-    
-    .stProgress > div > div > div {
-        background: linear-gradient(90deg, var(--dental-teal) 0%, var(--dental-teal-dark) 100%) !important;
-        border-radius: 8px !important;
-        height: 10px !important;
-    }
-    
-    .stProgress > div > div {
-        background: var(--dental-gray-100) !important;
-        border-radius: 8px !important;
-        height: 10px !important;
-    }
-    
-    .stButton > button {
-        background: linear-gradient(135deg, var(--dental-teal) 0%, var(--dental-teal-dark) 100%);
-        color: white;
-        border: none;
-        border-radius: 12px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 600;
-        font-size: 0.95rem;
-        transition: all 0.2s ease;
-        box-shadow: 0 4px 16px rgba(0, 180, 216, 0.3);
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(0, 180, 216, 0.4);
-    }
-    
-    .stButton > button:active {
-        transform: translateY(0);
-    }
-    
-    .stButton > button[kind="secondary"] {
-        background: var(--dental-gray-100);
-        color: var(--dental-navy);
-        box-shadow: none;
-        border: 1px solid var(--dental-gray-200);
-    }
-    
-    .stButton > button[kind="secondary"]:hover {
-        background: var(--dental-gray-200);
-        box-shadow: none;
-    }
-    
-    .stSelectbox > div > div {
-        border-radius: 12px !important;
-        border: 2px solid var(--dental-gray-200) !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    .stSelectbox > div > div:focus-within {
-        border-color: var(--dental-teal) !important;
-        box-shadow: 0 0 0 4px var(--dental-teal-light) !important;
-    }
-    
-    .stSpinner > div {
-        border-top-color: var(--dental-teal) !important;
-    }
-    
-    hr {
-        border-color: var(--dental-gray-200) !important;
-        margin: 1.5rem 0 !important;
-    }
-    
-    .streamlit-expanderHeader {
-        background: var(--dental-white);
-        border-radius: 12px;
-        border: 1px solid var(--dental-gray-200);
-        font-weight: 600;
-        color: var(--dental-navy);
-    }
-    
-    .streamlit-expanderContent {
-        background: var(--dental-gray-50);
-        border-radius: 0 0 12px 12px;
-        border: 1px solid var(--dental-gray-200);
-        border-top: none;
-    }
-    
-    .stSuccess, .stError, .stInfo, .stWarning {
-        border-radius: 12px !important;
-        border: none !important;
-        padding: 1rem 1.25rem !important;
-    }
-    
-    .stSuccess {
-        background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(34, 197, 94, 0.05) 100%) !important;
-        border-left: 4px solid var(--dental-green) !important;
-    }
-    
-    .stError {
-        background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.05) 100%) !important;
-        border-left: 4px solid var(--dental-red) !important;
-    }
-    
-    .stInfo {
-        background: linear-gradient(135deg, rgba(0, 180, 216, 0.1) 0%, rgba(0, 180, 216, 0.05) 100%) !important;
-        border-left: 4px solid var(--dental-teal) !important;
-    }
-    
-    .stWarning {
-        background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%) !important;
-        border-left: 4px solid var(--dental-amber) !important;
-    }
-    
+
     .patient-card-item {
-        background: var(--dental-gray-50);
+        background: #f1f5f9;
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        margin: 0.3rem 0;
+        border: 1px solid #e2e8f0;
+    }
+    .patient-card-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .patient-card-value {
+        font-size: 0.85rem;
+        color: #0f172a;
+    }
+
+    [data-testid="stChatMessage"] {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.5rem 0.75rem;
+    }
+    [data-testid="stChatMessageAvatarUser"] { background: #e0f2fe; }
+    [data-testid="stChatMessageAvatarAssistant"] { background: #fef3c7; }
+
+    [data-testid="stMetric"] {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
         border-radius: 10px;
         padding: 0.75rem 1rem;
-        margin: 0.5rem 0;
-        border: 1px solid var(--dental-gray-200);
     }
-    
-    .patient-card-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: var(--dental-gray-600);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-bottom: 0.25rem;
-    }
-    
-    .patient-card-value {
-        font-size: 0.9rem;
-        color: var(--dental-navy);
-        font-weight: 500;
-    }
-    
-    .typing-indicator {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        color: var(--dental-gray-600);
-        font-style: italic;
-        font-size: 0.9rem;
-    }
-    
-    .typing-indicator .dots {
-        display: flex;
-        gap: 3px;
-    }
-    
-    .typing-indicator .dots span {
-        width: 6px;
-        height: 6px;
-        background: var(--dental-teal);
-        border-radius: 50%;
-        animation: typing 1.4s ease-in-out infinite both;
-    }
-    
-    .typing-indicator .dots span:nth-child(2) { animation-delay: 0.2s; }
-    .typing-indicator .dots span:nth-child(3) { animation-delay: 0.4s; }
-    
-    @keyframes typing {
-        0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
-        40% { transform: scale(1.2); opacity: 1; }
-    }
-    
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: var(--dental-gray-100);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: var(--dental-gray-300);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: var(--dental-gray-400);
-    }
-    
-    [data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] {
-        background: var(--dental-teal-light) !important;
-        border: 2px solid var(--dental-teal) !important;
-    }
-    
-    [data-testid="stChatMessage"][aria-label="assistant"] [data-testid="stChatMessageAvatar"] {
-        background: #fff3e0 !important;
-        border: 2px solid var(--dental-amber) !important;
+
+    div[data-testid="stSidebar"] {
+        background: #f8fafc;
+        border-right: 1px solid #e2e8f0;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 PHASE_LABELS = {phase: phase.value.replace("_", " ").title() for phase in Phase}
 
@@ -413,7 +145,7 @@ def _reset(bundle, difficulty: str) -> None:
 
 
 def _render_sidebar() -> None:
-    st.sidebar.title(_t("station"))
+    st.sidebar.title("🦷 " + _t("station"))
     difficulty = st.sidebar.selectbox(
         _t("difficulty"), DIFFICULTIES, index=DIFFICULTIES.index("mid")
     )
@@ -430,7 +162,10 @@ def _render_sidebar() -> None:
     if st.sidebar.button(_t("start_encounter"), type="primary"):
         try:
             with st.spinner(_t("generating_patient")):
-                bundle = generate_case(difficulty=difficulty, language=st.session_state.get("language", "en"))
+                bundle = generate_case(
+                    difficulty=difficulty,
+                    language=st.session_state.get("language", "en"),
+                )
             _reset(bundle, difficulty)
             st.rerun()
         except NoProviderConfigured as exc:
@@ -455,7 +190,7 @@ def _render_sidebar() -> None:
                 f'<div class="patient-card-item">'
                 f'<div class="patient-card-label">{_t(label)}</div>'
                 f'<div class="patient-card-value">{" • ".join(values)}</div>'
-                f'</div>',
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
@@ -510,7 +245,7 @@ def _advance_once() -> None:
         "phase_reasons": st.session_state["phase_reasons"],
         "debrief": st.session_state["debrief"],
         "language": st.session_state.get("language", "en"),
-        "llm": get_llm(),
+        "llm": None,
     }
     config = {
         "configurable": {"thread_id": st.session_state["thread_id"]},
@@ -539,41 +274,42 @@ def _render_chat() -> None:
             st.write(getattr(message, "content", message))
 
     if phase is Phase.DEBRIEF:
+        # The encounter ended on the previous turn. Grading is its own graph
+        # invocation (the debrief node), run here exactly once, then rerun so the
+        # debrief panel can render.
+        if not st.session_state.get("debrief"):
+            with st.spinner(_t("grading")):
+                try:
+                    _advance_once()
+                except NoProviderConfigured as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(_t("grade_failed").format(error=exc))
+                    st.caption(_t("messages_kept"))
+                else:
+                    st.rerun()
         return
 
     if not st.session_state.get("case"):
         st.info(_t("start_info"))
         return
 
-    # The encounter ends when a phase advances to DEBRIEF. Grading is its own
-    # invocation, kicked off here rather than by the learner typing again.
-    if phase is Phase.DEBRIEF and not st.session_state.get("debrief"):
-        try:
-            _advance_once()
-        except Exception as exc:
-            st.error(f"Grading failed: {exc}")
-            st.caption("Your transcript is kept. Use Re-grade below to retry.")
-        else:
-            st.rerun()
-        return
-
     prompt = st.chat_input(_t("speak_to_patient"))
     if not prompt:
         return
 
-    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_core.messages import HumanMessage
 
-    # Add user message immediately
+    # Add the learner's message immediately so it renders on this pass.
     user_msg = HumanMessage(content=prompt)
     st.session_state["messages"].append(user_msg)
     st.session_state["total_turns"] += 1
     _note_revealed_findings()
 
-    # Show user message immediately
     with st.chat_message("user", avatar="👤"):
         st.write(prompt)
 
-    # Stream the patient's response
+    # Stream the patient's response.
     try:
         graph = get_graph()
         state = {
@@ -586,54 +322,43 @@ def _render_chat() -> None:
             "phase_reasons": st.session_state["phase_reasons"],
             "debrief": st.session_state["debrief"],
             "language": st.session_state.get("language", "en"),
-            "llm": get_llm(),
+            "llm": None,
         }
         config = {
             "configurable": {"thread_id": st.session_state["thread_id"]},
             "recursion_limit": 100,
         }
 
-        # Show typing indicator and stream response
         with st.chat_message("assistant", avatar="🦷"):
             placeholder = st.empty()
-            placeholder.markdown("🦷  *typing...*")
+            placeholder.markdown("🦷 *typing...*")
 
-            # Stream the response and collect the final state
-            with st.chat_message("assistant", avatar="🦷"):
-                placeholder = st.empty()
-                placeholder.markdown("🦷  *typing...*")
+            final_state = None
+            for chunk in graph.stream(state, config=config, stream_mode="updates"):
+                for _node_name, node_output in chunk.items():
+                    # Capture the latest state from each node update.
+                    if node_output:
+                        final_state = {**state, **node_output}
 
-                final_state = None
-                for chunk in graph.stream(state, config=config, stream_mode="updates"):
-                    for node_name, node_output in chunk.items():
-                        if node_name == "messages" and node_output:
-                            for msg in node_output:
-                                if hasattr(msg, "type") and msg.type == "ai":
-                                    placeholder.markdown(msg.content + "▌")
-                        # Capture the final state from the last update
-                        if node_output:
-                            final_state = {**state, **node_output}
+            # Use the final state from streaming (no second invoke).
+            if final_state is None:
+                final_state = graph.invoke(state, config=config)
 
-                # Use the final state from streaming (no second invoke)
-                if final_state is None:
-                    # Fallback: single invoke if streaming yielded nothing
-                    out = graph.invoke(state, config=config)
-                    final_state = out
+            # Show the patient's newest reply without the cursor.
+            ai_messages = [
+                m
+                for m in (final_state or {}).get("messages", [])
+                if getattr(m, "type", None) == "ai"
+            ]
+            if ai_messages:
+                placeholder.markdown(ai_messages[-1].content)
 
-                # Final message without cursor
-                if final_state and final_state.get("messages"):
-                    for msg in final_state["messages"]:
-                        if hasattr(msg, "type") and msg.type == "ai":
-                            placeholder.markdown(msg.content)
-                            break
-
-                # Update session state from the streamed final state
-                st.session_state["messages"] = final_state["messages"]
-                st.session_state["phase"] = final_state["phase"]
-                st.session_state["phase_reasons"] = final_state.get("phase_reasons", {})
-                st.session_state["turns_in_phase"] = final_state.get("turns_in_phase", 0)
-                st.session_state["total_turns"] = final_state.get("total_turns", 0)
-                st.session_state["debrief"] = final_state.get("debrief")
+            st.session_state["messages"] = final_state["messages"]
+            st.session_state["phase"] = final_state["phase"]
+            st.session_state["phase_reasons"] = final_state.get("phase_reasons", {})
+            st.session_state["turns_in_phase"] = final_state.get("turns_in_phase", 0)
+            st.session_state["total_turns"] = final_state.get("total_turns", 0)
+            st.session_state["debrief"] = final_state.get("debrief")
 
     except NoProviderConfigured as exc:
         st.error(str(exc))
@@ -691,11 +416,11 @@ def _render_debrief() -> None:
 
 def main() -> None:
     st.markdown(
-        '<div class="dental-header">'
-        '<h1>🦷 Dental OSCE</h1>'
-        '<p class="subtitle">A practice patient who will not volunteer anything you do not ask for, '
-        'and will not correct you until the debrief.</p>'
-        '</div>',
+        '<div class="clinic-header">'
+        "<h1>🦷 Dental OSCE</h1>"
+        "<p>A practice patient who will not volunteer anything you do not ask for, "
+        "and will not correct you until the debrief.</p>"
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -715,12 +440,9 @@ def main() -> None:
         if key not in st.session_state:
             st.session_state[key] = default
 
-    left, right = st.columns([2, 1])
-    with left:
-        _render_chat()
-        _render_debrief()
-    with right:
-        _render_sidebar()
+    _render_sidebar()
+    _render_chat()
+    _render_debrief()
 
     st.divider()
     st.caption(_t("not_for_clinical"))

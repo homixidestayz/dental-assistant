@@ -9,7 +9,6 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
-from dental.llm import get_llm
 from dental.model_call import invoke_structured
 from dental.schemas import PhaseTurn
 from dental.state import CEILING_REASON, TURN_CEILING, Phase, next_phase, LANGUAGE_LABELS
@@ -137,8 +136,10 @@ def _call_model(llm: Any, schema: type, system: str, human: str) -> Any:
 
 def run_phase(state: dict, phase: Phase, llm: Any = None) -> dict:
     """Play one turn of `phase`. Returns updated state with the phase possibly advanced."""
+    # A model in state pins the run (tests); otherwise None lets `invoke_structured`
+    # use the configured provider cascade, falling back if one provider misbehaves.
     if llm is None:
-        llm = state.get("llm") or get_llm()
+        llm = state.get("llm")
 
     system, human = _turn_prompt(state.get("patient", {}), phase, state)
 
